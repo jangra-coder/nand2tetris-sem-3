@@ -21,6 +21,7 @@ other .hdl files                    -> my lab chips (gates, ALU, PC, Register, B
 *.tst, *.cmp, *.hack                -> official test files for Part A
 assembler.py                        -> Part B (Hack assembler in Python)
 asm_tests/                          -> Add, Max, Rect, Pong programs used to test the assembler
+asm_tests/official/                 -> output of the official Nand2Tetris assembler for the same programs
 check_assembler.sh                  -> compares my assembler output with the official assembler
 Box.asm                             -> Part C (box program)
 Box.hack                            -> Box.asm converted using my assembler
@@ -43,7 +44,8 @@ The RAM16K, Screen and Keyboard inside Memory use the built-in chips of the simu
 python3 assembler.py asm_tests/Pong.asm
 ```
 
-This makes `asm_tests/Pong.hack`. To compare all programs with the official assembler:
+This makes `asm_tests/Pong.hack`. To compare my output with the official assembler output
+(saved in `asm_tests/official/`):
 
 ```
 bash check_assembler.sh
