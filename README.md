@@ -1,14 +1,12 @@
-# Nand to Tetris – I (ETCCNT301) — Lab repository
+# Nand to Tetris - I (ETCCNT301) lab repo
 
-**Rahul · Roll no. 2501350043 · B.Tech CSE, Semester III**
+Rahul, Roll no. 2501350043, B.Tech CSE 3rd sem
 
-| Folder | Contents |
-|--------|----------|
-| `projects/01` | Logic gates (Not, And, Or, Xor, Mux, DMux, 16-bit variants, Or8Way, Mux4/8Way16, DMux4/8Way) |
-| `projects/02` | Arithmetic chips (HalfAdder, FullAdder, Add16, Inc16, ALU) |
-| `projects/03` | Memory chips (Bit, Register, RAM8 … RAM16K, PC) |
-| `projects/05` | The Hack computer (CPU, Memory, Computer) |
-| `capstone/`   | **Capstone project** – computer + assembler + Box program (see `capstone/README.md`) |
-| `tools/`      | Official Nand2Tetris software suite (Hardware Simulator, CPU Emulator, Assembler) – not tracked in git |
+- `projects/01` - logic gates
+- `projects/02` - adders and ALU
+- `projects/03` - Bit, Register, RAM chips and PC
+- `projects/05` - CPU, Memory and Computer
+- `capstone/` - capstone project (computer + assembler + box program)
 
-Every chip was checked against the official `.tst` / `.cmp` files that sit next to it.
+All chips are tested with the official .tst and .cmp files.
+The nand2tetris software is not uploaded here, it can be downloaded from nand2tetris.org.
