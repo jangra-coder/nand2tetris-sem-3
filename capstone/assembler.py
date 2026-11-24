@@ -1,216 +1,156 @@
-#!/usr/bin/env python3
-"""
-assembler.py  -  Hack assembler (Nand to Tetris, Project 6)
+# Hack Assembler - Capstone Part B
+# Rahul, Roll no. 2501350043, K = 43
+#
+# K mod 3 = 1, so my extra feature is: if a line is wrong, print the
+# line number and the problem (for example "Line 7: invalid instruction")
+# and stop, instead of crashing with a python error.
+#
+# How to run:   python3 assembler.py Add.asm
+# It makes Add.hack in the same folder.
 
-Name     : Rahul
-Roll no. : 2501350043      ->  K = 43
-K mod 3  : 1  ->  extra feature: on a wrong line, print a clear message
-                  with the line number (e.g. "Line 7: invalid instruction")
-                  instead of crashing.
-
-Usage:
-    python3 assembler.py Prog.asm            # writes Prog.hack next to Prog.asm
-    python3 assembler.py Prog.asm Out.hack   # writes to Out.hack instead
-
-How it works (two passes over the file):
-    Pass 1  - throw away comments / blank lines,
-              remember the ROM address of every label  (LOOP)
-    Pass 2  - translate every remaining line into 16 bits.
-              Unknown symbols in @xxx are variables and get RAM
-              addresses 16, 17, 18, ... in order of first appearance.
-"""
-
-import os
-import re
 import sys
 
-# ---------------------------------------------------------------------------
-# 1. Lookup tables straight from the Hack machine-language specification
-# ---------------------------------------------------------------------------
-
-# comp  ->  7 bits:  a c1 c2 c3 c4 c5 c6
-COMP = {
-    "0":   "0101010", "1":   "0111111", "-1":  "0111010",
-    "D":   "0001100", "A":   "0110000", "M":   "1110000",
-    "!D":  "0001101", "!A":  "0110001", "!M":  "1110001",
-    "-D":  "0001111", "-A":  "0110011", "-M":  "1110011",
-    "D+1": "0011111", "A+1": "0110111", "M+1": "1110111",
-    "D-1": "0001110", "A-1": "0110010", "M-1": "1110010",
-    "D+A": "0000010", "D+M": "1000010",
-    "D-A": "0010011", "D-M": "1010011",
-    "A-D": "0000111", "M-D": "1000111",
-    "D&A": "0000000", "D&M": "1000000",
-    "D|A": "0010101", "D|M": "1010101",
+# comp part -> 7 bits (a c1 c2 c3 c4 c5 c6)
+comp_table = {
+    "0": "0101010", "1": "0111111", "-1": "0111010",
+    "D": "0001100", "A": "0110000", "!D": "0001101",
+    "!A": "0110001", "-D": "0001111", "-A": "0110011",
+    "D+1": "0011111", "A+1": "0110111", "D-1": "0001110",
+    "A-1": "0110010", "D+A": "0000010", "D-A": "0010011",
+    "A-D": "0000111", "D&A": "0000000", "D|A": "0010101",
+    "M": "1110000", "!M": "1110001", "-M": "1110011",
+    "M+1": "1110111", "M-1": "1110010", "D+M": "1000010",
+    "D-M": "1010011", "M-D": "1000111", "D&M": "1000000",
+    "D|M": "1010101",
 }
 
-# dest  ->  3 bits:  d1 d2 d3   (A, D, M)
-DEST = {
-    "":    "000", "M":   "001", "D":   "010", "MD":  "011",
-    "A":   "100", "AM":  "101", "AD":  "110", "AMD": "111",
+# dest part -> 3 bits (A D M)
+dest_table = {
+    "": "000", "M": "001", "D": "010", "MD": "011",
+    "A": "100", "AM": "101", "AD": "110", "AMD": "111",
 }
 
-# jump  ->  3 bits:  j1 j2 j3   (<0, =0, >0)
-JUMP = {
-    "":    "000", "JGT": "001", "JEQ": "010", "JGE": "011",
+# jump part -> 3 bits (j1 j2 j3)
+jump_table = {
+    "": "000", "JGT": "001", "JEQ": "010", "JGE": "011",
     "JLT": "100", "JNE": "101", "JLE": "110", "JMP": "111",
 }
 
-# Symbols that every Hack program already knows about.
-PREDEFINED = {
+# symbols that are already defined in every hack program
+symbols = {
     "SP": 0, "LCL": 1, "ARG": 2, "THIS": 3, "THAT": 4,
     "SCREEN": 16384, "KBD": 24576,
 }
-for _i in range(16):
-    PREDEFINED[f"R{_i}"] = _i
-
-# A symbol may contain letters, digits, '_', '.', '$', ':' and may not start with a digit.
-SYMBOL_RE = re.compile(r"^[A-Za-z_.$:][A-Za-z0-9_.$:]*$")
-
-FIRST_VARIABLE_ADDRESS = 16
+for i in range(16):
+    symbols["R" + str(i)] = i
 
 
-# ---------------------------------------------------------------------------
-# 2. Error reporting  (K mod 3 = 1 feature)
-# ---------------------------------------------------------------------------
-class AsmError(Exception):
-    """A problem found on one source line."""
-
-    def __init__(self, line_no, message):
-        super().__init__(f"Line {line_no}: invalid instruction - {message}")
-        self.line_no = line_no
+def error(line_no, message):
+    # my K feature: show the line number and stop the program nicely
+    print(f"Line {line_no}: invalid instruction - {message}")
+    print("No .hack file was made.")
+    sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# 3. Helpers
-# ---------------------------------------------------------------------------
 def clean(line):
-    """Remove comments and ALL whitespace.  Returns '' for an empty line."""
-    line = line.split("//", 1)[0]            # drop everything after //
-    return "".join(line.split())             # drop spaces / tabs
+    # remove the comment and all the spaces from a line
+    if "//" in line:
+        line = line[:line.index("//")]
+    line = line.replace(" ", "").replace("\t", "")
+    return line.strip()
 
 
-def read_instructions(path):
-    """Pass 0: read the file, keep only real instructions, with their original line numbers."""
-    instructions = []
-    with open(path) as f:
-        for line_no, raw in enumerate(f, start=1):
-            text = clean(raw)
-            if text:
-                instructions.append((line_no, text))
-    return instructions
+def is_symbol(name):
+    # a symbol can have letters, digits, _ . $ : but cannot start with a digit
+    if name == "" or name[0].isdigit():
+        return False
+    for ch in name:
+        if not (ch.isalnum() or ch in "_.$:"):
+            return False
+    return True
 
 
-def first_pass(instructions):
-    """
-    Build the symbol table with all labels.
-    A label (LOOP) does not become an instruction; it just names the
-    address of the NEXT real instruction, so we count ROM addresses as we go.
-    """
-    symbols = dict(PREDEFINED)
-    rom_address = 0
-    for line_no, text in instructions:
-        if text.startswith("("):
-            if not text.endswith(")"):
-                raise AsmError(line_no, f"label {text!r} is missing ')'")
-            name = text[1:-1]
-            if not SYMBOL_RE.match(name):
-                raise AsmError(line_no, f"{name!r} is not a valid label name")
-            if name in symbols:
-                raise AsmError(line_no, f"label {name!r} is already defined")
-            symbols[name] = rom_address
-        else:
-            rom_address += 1
-    return symbols
+# ---------------- read the .asm file ----------------
+if len(sys.argv) != 2 or not sys.argv[1].endswith(".asm"):
+    print("Usage: python3 assembler.py Prog.asm")
+    sys.exit(1)
+
+asm_file = sys.argv[1]
+hack_file = asm_file[:-4] + ".hack"
+
+# keep only the real instructions, together with their line number
+lines = []
+f = open(asm_file)
+line_no = 0
+for raw_line in f:
+    line_no += 1
+    text = clean(raw_line)
+    if text != "":
+        lines.append((line_no, text))
+f.close()
 
 
-def translate_a(text, line_no, symbols, next_var):
-    """
-    @value  ->  0 + 15-bit binary value.
-    Returns (binary_string, next_var).  next_var is the RAM address the
-    next brand-new variable will receive.
-    """
-    value = text[1:]
-    if value == "":
-        raise AsmError(line_no, "'@' must be followed by a number or a symbol")
-    if value.isdigit():
-        number = int(value)
-        if number > 32767:
-            raise AsmError(line_no, f"@{number} is too large (max 32767)")
-    elif SYMBOL_RE.match(value):
-        if value not in symbols:                 # a new variable
-            symbols[value] = next_var
-            next_var += 1
-        number = symbols[value]
+# ---------------- first pass: find the labels ----------------
+# a label like (LOOP) is not an instruction, it is just the
+# address of the next instruction, so only count real instructions
+rom_address = 0
+for line_no, text in lines:
+    if text[0] == "(":
+        name = text[1:-1]
+        if text[-1] != ")" or not is_symbol(name):
+            error(line_no, "wrong label " + text)
+        symbols[name] = rom_address
     else:
-        raise AsmError(line_no, f"{value!r} is not a valid number or symbol")
-    return "0" + format(number, "015b"), next_var
+        rom_address += 1
 
+# ---------------- second pass: make the 16 bit codes ----------------
+output = []
+next_variable = 16      # new variables go to RAM 16, 17, 18 ...
 
-def translate_c(text, line_no):
-    """dest=comp;jump  ->  111 + comp(7) + dest(3) + jump(3)."""
-    dest, comp, jump = "", text, ""
-    if "=" in comp:
-        dest, comp = comp.split("=", 1)
-    if ";" in comp:
-        comp, jump = comp.split(";", 1)
-    if comp not in COMP:
-        raise AsmError(line_no, f"unknown computation {comp!r}")
-    if dest not in DEST:
-        raise AsmError(line_no, f"unknown destination {dest!r}")
-    if jump not in JUMP:
-        raise AsmError(line_no, f"unknown jump {jump!r}")
-    return "111" + COMP[comp] + DEST[dest] + JUMP[jump]
+for line_no, text in lines:
+    if text[0] == "(":
+        continue        # labels were done in the first pass
 
-
-def second_pass(instructions, symbols):
-    """Translate every non-label line into a 16-bit string."""
-    binary = []
-    next_var = FIRST_VARIABLE_ADDRESS
-    for line_no, text in instructions:
-        if text.startswith("("):                 # labels were handled in pass 1
-            continue
-        if text.startswith("@"):
-            code, next_var = translate_a(text, line_no, symbols, next_var)
+    if text[0] == "@":
+        # A-instruction:  0 + value in 15 bits
+        value = text[1:]
+        if value.isdigit():
+            number = int(value)
+            if number > 32767:
+                error(line_no, "number is too big " + value)
+        elif is_symbol(value):
+            if value not in symbols:
+                symbols[value] = next_variable
+                next_variable += 1
+            number = symbols[value]
         else:
-            code = translate_c(text, line_no)
-        binary.append(code)
-    return binary
+            error(line_no, "wrong value after @: " + value)
+        output.append("0" + format(number, "015b"))
 
+    else:
+        # C-instruction:  dest=comp;jump  ->  111 + comp + dest + jump
+        dest = ""
+        jump = ""
+        comp = text
+        if "=" in comp:
+            dest = comp.split("=")[0]
+            comp = comp.split("=")[1]
+        if ";" in comp:
+            jump = comp.split(";")[1]
+            comp = comp.split(";")[0]
 
-def assemble(asm_path, hack_path):
-    """Full pipeline. Raises AsmError on the first bad line."""
-    instructions = read_instructions(asm_path)
-    symbols = first_pass(instructions)
-    binary = second_pass(instructions, symbols)
-    with open(hack_path, "w") as f:
-        f.write("\n".join(binary) + "\n")
-    return len(binary)
+        if comp not in comp_table:
+            error(line_no, "unknown comp '" + comp + "'")
+        if dest not in dest_table:
+            error(line_no, "unknown dest '" + dest + "'")
+        if jump not in jump_table:
+            error(line_no, "unknown jump '" + jump + "'")
+        output.append("111" + comp_table[comp] + dest_table[dest] + jump_table[jump])
 
-
-# ---------------------------------------------------------------------------
-# 4. Command-line entry point
-# ---------------------------------------------------------------------------
-def main(argv):
-    if len(argv) not in (2, 3):
-        print("Usage: python3 assembler.py Prog.asm [Prog.hack]")
-        return 2
-    asm_path = argv[1]
-    hack_path = argv[2] if len(argv) == 3 else os.path.splitext(asm_path)[0] + ".hack"
-
-    if not os.path.exists(asm_path):
-        print(f"Error: file not found: {asm_path}")
-        return 1
-
-    try:
-        count = assemble(asm_path, hack_path)
-    except AsmError as err:
-        print(err)                                   # e.g.  Line 7: invalid instruction - ...
-        print("No .hack file was written.")
-        return 1
-
-    print(f"OK: {count} instructions written to {hack_path}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+# ---------------- write the .hack file ----------------
+# (only reaches here if every line was correct)
+f = open(hack_file, "w")
+for code in output:
+    f.write(code + "\n")
+f.close()
+print("Done:", len(output), "instructions written to", hack_file)
